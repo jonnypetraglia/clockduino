@@ -27,16 +27,18 @@ int VS1053_reset = -1,
 #define ERR_NO_BACKGROUND 12
 
 // Different states the clock can be in
-typedef enum {NORMAL, ALARMED, SNOOZED, MENU,
+typedef enum {NORMAL, ALARMED, MENU,
               SET_ARMED, SET_TIME, SET_ALARM, SET_SNOOZE, SET_VOLUME, SET_BRIGHTNESS} state;
 state currentState = NORMAL, currentMenuItem = SET_ARMED;
+
+// For dots:  // 0x2 is middle, 0x4 is left-top, 0x8 is left-bottom, 0x16 is right
 
 // Objects for the peripherals
 class Alarm {
   public:
-    boolean _armed = false;
-    int _time = 0;
-    int _snooze = 5;
+    boolean _armed = true; //DEBUG: false;
+    int _time = 629; //DEBUG: 0;
+    int _snooze = 1; //DEBUG: 5;
     int _snoozeCount = 0;
     int _volume = 10;
     
@@ -44,7 +46,11 @@ class Alarm {
       _time = (_time + 100) % 2400;
     }
     void addMinute() {
-      _time += 1;
+      if(_time % 59 == 59) {
+        _time -= 59;
+        addHour();
+      } else
+        _time += 1;
     }
     int hitSnooze() {
       _snoozeCount += 1;
@@ -53,7 +59,7 @@ class Alarm {
       _snoozeCount = 0;
     }
     boolean check(int t) {
-      return t == _time + (_snooze * _snoozeCount);
+      return _armed && (t == _time + (_snooze * _snoozeCount));
     }
 };
 Alarm alarm;
@@ -82,7 +88,7 @@ void setup()
      Serial.println(F("Couldn't find VS1053, do you have the right pins defined?"));
      haltWithError(ERR_NO_AUDIO);
   }
-   if (!SD.begin(VS1053_cardselect)) {
+  if (!SD.begin(VS1053_cardselect)) {
     Serial.println(F("SD failed, or not present"));
     haltWithError(ERR_NO_STORAGE);
   }
@@ -90,9 +96,6 @@ void setup()
     Serial.println(F("DREQ pin is not an interrupt pin"));
     haltWithError(ERR_NO_BACKGROUND);
   }
-
-  Serial.print("Starting");
-  Serial.println(100-alarm._volume);
   
   player.setVolume(100-alarm._volume, 100-alarm._volume);
   beep();
@@ -117,7 +120,8 @@ void loop()
     _previousMillis = millis();
   }
 
-  alarmCheck();
+  if(currentState != SET_TIME && currentState != SET_ALARM)
+    alarmCheck();
   buttonCheck();
 }
 
@@ -126,10 +130,10 @@ void loop()
 void updateDisplay() {
   
   //Light up the Snooze LED if we're currently snoozing
-  digitalWrite(snoozeLedPin, currentState==SNOOZED || currentState==ALARMED ? HIGH : LOW);
+  digitalWrite(snoozeLedPin, alarm._snoozeCount > 0 || currentState==ALARMED ? HIGH : LOW);
 
   // Display is flashing and is currently blank
-  if(currentState != NORMAL && currentState != ALARMED && currentState != SNOOZED && currentState != MENU) {
+  if(currentState != NORMAL && currentState != ALARMED && currentState != MENU) {
     if(!dots) {
       matrix.clear();
       matrix.writeDisplay();
@@ -150,9 +154,11 @@ void updateDisplay() {
     matrix.print(i);
   }
 
+  boolean AMPM = false;
   switch(currentState) {
     case SET_ALARM:
       printTime(alarm._time);
+      AMPM = alarm._time >= 1200;
       break;
     case SET_SNOOZE:
       matrix.print(alarm._snooze);
@@ -166,17 +172,20 @@ void updateDisplay() {
       
     case NORMAL:
     case ALARMED:
-    case SNOOZED:
     case SET_TIME:
       DateTime now = rtc.now();
       printTime(now.hour()*100 + now.minute());
+      AMPM = now.hour() >= 12;
       break;
   }
 
-  matrix.writeDigitRaw(2, (alarm._armed? 4 : 0) + (dots ? 2 : 0)); // 2 is middle, 4 is left-top, 8 is bottom, 16 is top right
-  //matrix.drawColon(dots);
+  updateDots(AMPM);
   matrix.writeDisplay();
   _previousMillis = millis();
+}
+
+void updateDots(boolean isPM) {
+  matrix.writeDigitRaw(2, (isPM ? 8 : 0) + (alarm._armed? 4 : 0) + (dots ? 2 : 0));
 }
 
 void navigateMenu() {
@@ -200,7 +209,7 @@ void navigateMenu() {
         break;
       case SET_VOLUME:
         currentMenuItem = SET_BRIGHTNESS;
-        player.startPlayingFile("mmenu006.mp3"); //TODO
+        player.startPlayingFile("mmenu006.mp3");
         break;
       case SET_BRIGHTNESS:
         currentMenuItem = SET_ARMED;
@@ -301,7 +310,6 @@ void buttonCheck() {
   if (hourPressed && minutePressed) {
     switch(currentState) {
       case ALARMED:
-      case SNOOZED:
         currentState = NORMAL;
         alarm.reset();
         player.stopPlaying();
@@ -354,7 +362,6 @@ void buttonCheck() {
         if(currentMenuItem == SET_ARMED) {
           alarm._armed = !alarm._armed;
           player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
-          //TODO: toggle alarm
         } else {
           currentState = currentMenuItem;
           beep();
@@ -376,8 +383,11 @@ void buttonCheck() {
 void alarmCheck() {
   DateTime now = rtc.now();
   int t = now.hour()*100 + now.minute();
-  if(alarm.check(t))
-    startAlarm();
+  if(alarm.check(t) || (currentState == ALARMED && !player.playingMusic)) {
+    Serial.println("ALARMED");
+    currentState = ALARMED;
+    player.startPlayingFile("alarming.mp3");
+  }
 }
 
 void printTime(int t) {
@@ -396,37 +406,21 @@ void printTime(int t) {
 void snooze() {
   alarm.hitSnooze();
   player.stopPlaying();
-  //TODO: Change state to SNOOZED
-}
-
-void startAlarm()
-{
-  /*
-   * Play different track depending on times snoozed
-   */
 }
 
 void haltWithError(int errorCode) {
   matrix.clear();
-  matrix.print(errorCode);  //TODO: Display 'E:##'
-  matrix.drawColon(dots);
+  matrix.print(errorCode);
+  matrix.writeDigitRaw(1,121);
   matrix.writeDisplay();
   while(1);
 }
 
 /* TODO:
- *  - pressing both buttons enters Menu (H = next, M = previous, S = confirm, H&M = exit)
- *    6. "Set brightness"
- *  - show dot for AM/PM (in printTime?)
- *  + howto dismiss alarm? press both buttons when snoozed?
- *  - show dot when armed?
- *  + show Snooze LED when alarming/snoozed
- *  - use SD.begin in main loop so card can be removed when on?
- *    - play "bum-BUM" sound on insert, "BUM-bum" on remove
- *    - maybe use other light for SD?
+ *  - rework navigateMenu (& maybe buttonCheck) to clean up
+ *    - simplified way of playing file; stop player beforehand
  *  - use beeps as fallback for if file cannot be played / card is absent
  *  - make prettier startup sound
- *  - add menu option to choose track?
  *  - Store settings to SD so persists through power change
  *    - http://pastebin.com/2jyCDHcf
  *      - https://www.arduino.cc/en/Tutorial/DumpFile
@@ -435,6 +429,8 @@ void haltWithError(int errorCode) {
  *    - https://github.com/bneedhamia/sdconfigfile
  *    - https://github.com/nigelb/arduino-FSConf
  *    - https://github.com/stevemarple/IniFile
+ *  - Volume, for some reason, does not work; maybe not through headphone jack?
+ *  - add menu option to choose track?
  */
 
 unsigned long sec(unsigned long x)

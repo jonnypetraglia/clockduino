@@ -27,17 +27,21 @@ int VS1053_reset = -1,
 #define ERR_NO_BACKGROUND 12
 
 // Different states the clock can be in
-typedef enum {NORMAL, ALARMED, SNOOZED, MENU, SET_ARMED, SET_TIME, SET_ALARM, SET_SNOOZE, SET_VOLUME} state;
-state currentState = NORMAL;
+typedef enum {NORMAL, ALARMED, SNOOZED, MENU,
+              SET_ARMED, SET_TIME, SET_ALARM, SET_SNOOZE, SET_VOLUME, SET_BRIGHTNESS} state;
+state currentState = NORMAL, currentMenuItem = SET_ARMED;
 
 // Objects for the peripherals
 class Alarm {
   public:
+    boolean _armed = false;
     int _time = 0;
     int _snooze = 5;
     int _snoozeCount = 0;
+    int _volume = 10;
+    
     void addHour() {
-      _time = (_time + 100) % 1200;
+      _time = (_time + 100) % 2400;
     }
     void addMinute() {
       _time += 1;
@@ -45,7 +49,7 @@ class Alarm {
     int hitSnooze() {
       _snoozeCount += 1;
     }
-    int dismiss() {
+    int reset() {
       _snoozeCount = 0;
     }
     boolean check(int t) {
@@ -61,6 +65,7 @@ Adafruit_VS1053_FilePlayer player = Adafruit_VS1053_FilePlayer(VS1053_reset, VS1
 unsigned long _previousMillis = 0; // Tracks time since last loop iteration
 boolean waitingOnButtonLift;       // Tracks whether or not a button has been pressed and is awaiting release
 boolean dots = false;              // Tracks the status of the dots for flashing
+unsigned int brightness = 15;
 
 // One-time setup to initialize the application
 void setup() 
@@ -85,14 +90,22 @@ void setup()
     Serial.println(F("DREQ pin is not an interrupt pin"));
     haltWithError(ERR_NO_BACKGROUND);
   }
-  
-  player.setVolume(20,20);
-  player.sineTest(0x44, 500);
-  Serial.println("Playing started");
 
+  Serial.print("Starting");
+  Serial.println(100-alarm._volume);
+  
+  player.setVolume(100-alarm._volume, 100-alarm._volume);
+  beep();
+
+  matrix.setBrightness(brightness);
   matrix.print(8888);
   matrix.writeDisplay();
-  delay(1000);
+  delay(500);
+}
+
+void beep() {
+  player.sineTest(0x44, 250);
+  player.stopPlaying();
 }
 
 // Main program loop; updates display every half second & calls other programs to check on state
@@ -111,19 +124,12 @@ void loop()
 
 // Draws the display, depending on the state
 void updateDisplay() {
-  switch(currentState) {
-    case SET_TIME:
-      Serial.println("SET_TIME");
-      break;
-    case SET_ALARM:
-      Serial.println("SET_ALARM");
-      break;
-    case NORMAL:
-      Serial.println("NORMAL");
-      break;
-  }
-  /*** Just clear the display if the period is in the middle of a flash ***/
-  if(currentState == SET_TIME || currentState == SET_ALARM) {
+  
+  //Light up the Snooze LED if we're currently snoozing
+  digitalWrite(snoozeLedPin, currentState==SNOOZED || currentState==ALARMED ? HIGH : LOW);
+
+  // Display is flashing and is currently blank
+  if(currentState != NORMAL && currentState != ALARMED && currentState != SNOOZED && currentState != MENU) {
     if(!dots) {
       matrix.clear();
       matrix.writeDisplay();
@@ -131,63 +137,152 @@ void updateDisplay() {
     }
   }
 
-  // Otherwise, just display the alarm or time
-  if(currentState == SET_ALARM) {
-    printTime(alarm._time);
-  } else {
-    DateTime now = rtc.now();
-    printTime(now.hour()*100 + now.minute());
+  if(currentState == MENU || currentState == SET_ARMED) {
+    int i = 0;
+    switch(currentMenuItem) {
+      case SET_BRIGHTNESS:  i += 1;
+      case SET_VOLUME:  i += 1;
+      case SET_SNOOZE:  i += 1;
+      case SET_ALARM:   i += 1;
+      case SET_TIME:    i += 1;
+      case SET_ARMED:   i += 1;
+    }
+    matrix.print(i);
   }
-  matrix.drawColon(dots);
+
+  switch(currentState) {
+    case SET_ALARM:
+      printTime(alarm._time);
+      break;
+    case SET_SNOOZE:
+      matrix.print(alarm._snooze);
+      break;
+    case SET_VOLUME:
+      matrix.print(alarm._volume);
+      break;
+    case SET_BRIGHTNESS:
+      matrix.print(brightness);
+      break;
+      
+    case NORMAL:
+    case ALARMED:
+    case SNOOZED:
+    case SET_TIME:
+      DateTime now = rtc.now();
+      printTime(now.hour()*100 + now.minute());
+      break;
+  }
+
+  matrix.writeDigitRaw(2, (alarm._armed? 4 : 0) + (dots ? 2 : 0)); // 2 is middle, 4 is left-top, 8 is bottom, 16 is top right
+  //matrix.drawColon(dots);
   matrix.writeDisplay();
   _previousMillis = millis();
 }
 
-// Change state depending on button states
-void changeState() {
-    if (digitalRead(snoozeBtnPin) == LOW) {
-      Serial.println("Pressed hour and min and snooze");
-      if(currentState == NORMAL)
-        currentState = SET_ALARM;
-      else if(currentState == SET_ALARM || currentState == SET_TIME)
-        currentState = NORMAL;
-    } else {
-      Serial.println("Pressed hour and min");
-      if(currentState == NORMAL)
-        currentState = SET_TIME;
-      else if(currentState == SET_TIME)
-        currentState = NORMAL;
+void navigateMenu() {
+  if (digitalRead(hourBtnPin) == LOW){
+    switch(currentMenuItem) {
+      case SET_ARMED:
+        currentMenuItem = SET_TIME;
+        player.startPlayingFile("mmenu002.mp3");
+        break;
+      case SET_TIME: 
+        currentMenuItem = SET_ALARM;
+        player.startPlayingFile("mmenu003.mp3");
+        break;
+      case SET_ALARM:
+        currentMenuItem = SET_SNOOZE;
+        player.startPlayingFile("mmenu004.mp3");
+        break;
+      case SET_SNOOZE:
+        currentMenuItem = SET_VOLUME;
+        player.startPlayingFile("mmenu005.mp3");
+        break;
+      case SET_VOLUME:
+        currentMenuItem = SET_BRIGHTNESS;
+        player.startPlayingFile("mmenu006.mp3"); //TODO
+        break;
+      case SET_BRIGHTNESS:
+        currentMenuItem = SET_ARMED;
+        player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
+        break;
     }
-    waitingOnButtonLift = true;
+  }
+  else if (digitalRead(minuteBtnPin) == LOW) {
+    switch(currentMenuItem) {
+      case SET_ARMED:
+        currentMenuItem = SET_BRIGHTNESS;
+        player.startPlayingFile("mmenu006.mp3");
+        break;
+      case SET_TIME: 
+        currentMenuItem = SET_ARMED;
+        player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
+        break;
+      case SET_ALARM:
+        currentMenuItem = SET_TIME;
+        player.startPlayingFile("mmenu002.mp3");
+        break;
+      case SET_SNOOZE:
+        currentMenuItem = SET_ALARM;
+        player.startPlayingFile("mmenu003.mp3");
+        break;
+      case SET_VOLUME:
+        currentMenuItem = SET_SNOOZE;
+        player.startPlayingFile("mmenu004.mp3");
+        break;
+      case SET_BRIGHTNESS:
+        currentMenuItem = SET_VOLUME;
+        player.startPlayingFile("mmenu005.mp3");
+        break;
+    }
+  }
 }
 
 // Set the time
 void setTime() {
+  DateTime now = rtc.now();
   if (digitalRead(hourBtnPin) == LOW){
-    Serial.println("Pressed hour");
-    if(currentState == SET_TIME) {
-      DateTime now = rtc.now();
-      now = now + TimeSpan(0, 1, 0, 0);
-      rtc.adjust(now);
-    } else if(currentState == SET_ALARM) {
-      alarm.addHour();
-    } else {
-      return;
-    }
-    dots = true;
-    updateDisplay();
-    waitingOnButtonLift = true;
+    now = now + TimeSpan(0, 1, 0, 0);
   } else if (digitalRead(minuteBtnPin) == LOW) {
-    Serial.println("Pressed minute");
-    if(currentState == SET_TIME) {
-      DateTime now = rtc.now();
-      now = now + TimeSpan(0, 0, 1, 0);
-      rtc.adjust(now);
-      dots = true;
-      updateDisplay();
-      waitingOnButtonLift = true;
-    }
+    now = now + TimeSpan(0, 0, 1, 0);
   }
+  rtc.adjust(now);
+}
+
+// Set the alarm
+void setAlarm() {
+  if (digitalRead(hourBtnPin) == LOW){
+    alarm.addHour();
+  } else if (digitalRead(minuteBtnPin) == LOW) {
+    alarm.addMinute();
+  }
+}
+
+void setSnooze() {
+  if (digitalRead(hourBtnPin) == LOW){
+    alarm._snooze = min(alarm._snooze + 1, 59);
+  } else if (digitalRead(minuteBtnPin) == LOW) {
+    alarm._snooze = max(alarm._snooze - 1, 1);
+  }
+}
+
+void setVolume() {
+  if (digitalRead(hourBtnPin) == LOW){
+    alarm._volume = min(alarm._volume + 10, 1000);
+  } else if (digitalRead(minuteBtnPin) == LOW) {
+    alarm._volume = max(alarm._volume - 10 , 1);
+  }
+  player.setVolume(100-alarm._volume, 100-alarm._volume);
+  beep();
+}
+
+void setBrightness() {
+  if (digitalRead(hourBtnPin) == LOW){
+    brightness = min(brightness + 1, 15);
+  } else if (digitalRead(minuteBtnPin) == LOW) {
+    brightness = max(brightness - 1, 1);
+  }
+  matrix.setBrightness(brightness);
 }
 
 // Check the state of the buttons and act accordingly
@@ -197,28 +292,84 @@ void buttonCheck() {
   boolean minutePressed = digitalRead(minuteBtnPin) == LOW;
   boolean snoozePressed = digitalRead(snoozeBtnPin) == LOW;
 
-  if(waitingOnButtonLift && (hourPressed || minutePressed || snoozePressed)) {
-    Serial.println("Waiting on button press ");
-    Serial.println(waitingOnButtonLift);
-    Serial.println(hourPressed);
-    Serial.println(minutePressed);
-    Serial.println(snoozePressed);
+  if(waitingOnButtonLift && (hourPressed || minutePressed || snoozePressed))
     return;
-  }
 
   waitingOnButtonLift = false;
 
-  digitalWrite(snoozeLedPin, snoozePressed ? HIGH : LOW);
 
-  if (hourPressed && minutePressed)
-  {
-    changeState();
-  }
-  else if (hourPressed || minutePressed) {
-    setTime();
-  }
-  else if (snoozePressed && currentState==ALARMED) {
-    snooze();
+  if (hourPressed && minutePressed) {
+    switch(currentState) {
+      case ALARMED:
+      case SNOOZED:
+        currentState = NORMAL;
+        alarm.reset();
+        player.stopPlaying();
+        break;
+      case NORMAL:
+        Serial.print("Entering Menu");
+        currentState = MENU;
+        currentMenuItem = SET_ARMED;
+        player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
+        break;
+      default:
+        currentState = NORMAL;
+        beep();
+        break;
+    }
+    waitingOnButtonLift = true; 
+  } else if (hourPressed || minutePressed) {
+    switch(currentState) {
+      case MENU:
+        navigateMenu();
+        break;
+      case SET_TIME:
+        setTime();
+        break;
+      case SET_ALARM:
+        setAlarm();
+        break;
+      case SET_SNOOZE:
+        setSnooze();
+        break;
+      case SET_VOLUME:
+        setVolume();
+        break;
+      case SET_BRIGHTNESS:
+        setBrightness();
+        break;
+      case NORMAL:
+      case SET_ARMED:
+        return;
+    }
+    dots = true;
+    updateDisplay();
+    waitingOnButtonLift = true;
+  } else if (snoozePressed) {
+    switch(currentState) {
+      case ALARMED:
+        snooze();
+        break;
+      case MENU:
+        if(currentMenuItem == SET_ARMED) {
+          alarm._armed = !alarm._armed;
+          player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
+          //TODO: toggle alarm
+        } else {
+          currentState = currentMenuItem;
+          beep();
+        }
+        break;
+      case SET_TIME:
+      case SET_ALARM:
+      case SET_SNOOZE:
+      case SET_VOLUME:
+      case SET_BRIGHTNESS:
+        currentState = MENU;
+        beep();
+    }
+    updateDisplay();
+    waitingOnButtonLift = true;
   }
 }
 
@@ -230,8 +381,15 @@ void alarmCheck() {
 }
 
 void printTime(int t) {
-  matrix.print(t % 1200);
-//  matrix.writeDigitNum(2, i++, true);
+  if(t < 100)
+    matrix.print(1200 + t);
+  else if(t < 1300)
+    matrix.print(t);
+  else
+    matrix.print(t % 1200);
+
+  if(t >= 1200)
+    matrix.writeDigitNum(2, 7, true);
 }
 
 
@@ -258,16 +416,11 @@ void haltWithError(int errorCode) {
 
 /* TODO:
  *  - pressing both buttons enters Menu (H = next, M = previous, S = confirm, H&M = exit)
- *    1. "Set armed/Alarm Enabled" (H = Y, M = N, S = confirm)
- *    2. "Set alarm" (H = H, M = M, S = confirm)
- *    3. "Set time" (H = H, M = M, S = confirm)
- *    4. "Set volume" (H = +, M = -, S = confirm) [1-100 by 10's?; remember: smaller # = louder]
- *      - beep on each change
- *    5. "Set snooze delay" (H = +, M = -, S = confirm)
+ *    6. "Set brightness"
  *  - show dot for AM/PM (in printTime?)
- *  - howto dismiss alarm? press both buttons when snoozed?
- *  - show dot when armed
- *  - show Snooze LED when alarming/snoozed
+ *  + howto dismiss alarm? press both buttons when snoozed?
+ *  - show dot when armed?
+ *  + show Snooze LED when alarming/snoozed
  *  - use SD.begin in main loop so card can be removed when on?
  *    - play "bum-BUM" sound on insert, "BUM-bum" on remove
  *    - maybe use other light for SD?

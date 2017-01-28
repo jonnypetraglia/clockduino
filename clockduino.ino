@@ -1,6 +1,8 @@
+// https://github.com/adafruit/RTClib
 #include <Wire.h>
 #include <RTClib.h>
 
+// https://github.com/adafruit/Adafruit_LED_Backpack
 #include <Adafruit_GFX.h>
 #include <gfxfont.h>
 #include <Adafruit_LEDBackpack.h>
@@ -9,14 +11,19 @@
 #define LED_DOTS_LEFTBOT 8
 #define LED_DOTS_RIGHT   16
 
+// https://github.com/adafruit/Adafruit_VS1053_Library
 #include <SPI.h>
 #include <Adafruit_VS1053.h>
 #include <SD.h>
-#define VS1053_RESET -1,
+#define VS1053_RESET -1
 #define VS1053_CHIPSELECT 7
 #define VS1053_DATASELECT 6
 #define VS1053_CARDSELECT 4
 #define VS1053_DREQ 3
+
+// https://github.com/bneedhamia/sdconfigfile
+#include <SDConfigFile.h>
+#define CONFIG_FILE "config.cfg"
 
 
 #define ERR_NO_AUDIO 4
@@ -28,8 +35,6 @@
 #define PIN_BTN_SNOOZE 10
 #define PIN_BTN_HOUR   9
 #define PIN_BTN_MINUTE 8
-
-
 
 
 // Different states the clock can be in
@@ -50,9 +55,8 @@ class Alarm {
       _time = (_time + 100) % 2400;
     }
     void addMinute() {
-      if(_time % 59 == 59) {
+      if(_time % 100 == 59) {
         _time -= 59;
-        addHour();
       } else
         _time += 1;
     }
@@ -81,7 +85,7 @@ unsigned int brightness = 15;
 void setup() 
 {
   Serial.begin(9600);
-//  rtc.begin(DateTime(F(__DATE__), F(__TIME__)));
+  rtc.begin(DateTime(F(__DATE__), F(__TIME__)));
   matrix.begin(0x70);
   pinMode(PIN_BTN_SNOOZE, INPUT_PULLUP);
   pinMode(PIN_BTN_HOUR,   INPUT_PULLUP);
@@ -92,7 +96,7 @@ void setup()
      Serial.println(F("Couldn't find VS1053, do you have the right pins defined?"));
      haltWithError(ERR_NO_AUDIO);
   }
-  if (!SD.begin(VS1053_cardselect)) {
+  if (!SD.begin(VS1053_CARDSELECT)) {
     Serial.println(F("SD failed, or not present"));
     haltWithError(ERR_NO_STORAGE);
   }
@@ -100,6 +104,8 @@ void setup()
     Serial.println(F("DREQ pin is not an interrupt pin"));
     haltWithError(ERR_NO_BACKGROUND);
   }
+
+  readConfig();
   
   player.setVolume(100-alarm._volume, 100-alarm._volume);
   beep();
@@ -180,7 +186,6 @@ void updateDisplay() {
 
   updateDots(AMPM);
   matrix.writeDisplay();
-  _previousMillis = millis();
 }
 
 // Update AM/PM, armed, & center dots
@@ -201,13 +206,29 @@ void exitMenu() {
 
 void returnToMenu() {
   currentState = MENU;
-  beep();
+  SD.remove(CONFIG_FILE);
+  File cfgFile = SD.open(CONFIG_FILE, FILE_WRITE);
+  if(!cfgFile) {
+    Serial.print("Error writing to config");
+    beep(); beep(); return;
+  }
+  cfgFile.print(F("armed="));
+  cfgFile.println(alarm._armed);
+  cfgFile.print(F("snooze="));
+  cfgFile.println(alarm._snooze);
+  cfgFile.print(F("volume="));
+  cfgFile.println(alarm._volume);
+  cfgFile.print(F("brightness="));
+  cfgFile.println(brightness);
+  cfgFile.close();
 }
 
 void selectMenuItem() {
   if(currentMenuItem == SET_ARMED) {
     alarm._armed = !alarm._armed;
-    play(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
+//    play(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
+    returnToMenu();
+    navigateMenu();
   } else {
     currentState = currentMenuItem;
     beep();
@@ -243,6 +264,8 @@ void setTime() {
     now = now + TimeSpan(0, 1, 0, 0);
   } else if (digitalRead(PIN_BTN_MINUTE) == LOW) {
     now = now + TimeSpan(0, 0, 1, 0);
+    if(now.minute()==0)
+      now = now - TimeSpan(0, 1, 0, 0);
   }
   rtc.adjust(now);
 }
@@ -305,7 +328,6 @@ void buttonCheck() {
         exitMenu();
         break;
     }
-
   // Singular button press; handle different depending on state
   } else if (hourPressed || minutePressed) {
     switch(currentState) {
@@ -332,7 +354,6 @@ void buttonCheck() {
         return;
     }
     dots = true;
-
   // Snooze & confirm menu selection
   } else if (snoozePressed) {
     if(currentState==ALARMED)
@@ -342,8 +363,9 @@ void buttonCheck() {
     else
       returnToMenu();
   }
-  updateDisplay();
   waitingOnButtonLift = hourPressed || minutePressed || snoozePressed;
+  if(waitingOnButtonLift)
+    updateDisplay();
 }
 
 // Check if alarm should be / should start playing
@@ -372,6 +394,24 @@ void printTime(int t) {
 }
 
 
+
+void readConfig() {
+  SDConfigFile cfg;
+
+  cfg.begin(CONFIG_FILE, 128);
+  while (cfg.readNextSetting()) {
+    if (cfg.nameIs("armed"))
+      alarm._armed = cfg.getBooleanValue();
+    else if(cfg.nameIs("snooze"))
+      alarm._snooze = cfg.getIntValue();
+    else if(cfg.nameIs("volume"))
+      alarm._volume = cfg.getIntValue();
+    else if(cfg.nameIs("brightness"))
+      brightness = cfg.getIntValue();
+  }
+  cfg.end();
+}
+
 void dismissAlarm() {
   currentState = NORMAL;
   alarm.reset();
@@ -384,7 +424,7 @@ void snooze() {
   currentState = NORMAL; 
 }
 
-void play(char* filename) {
+void play(const char* filename) {
   Serial.print("Playing ");
   Serial.println(filename);
   player.stopPlaying();
@@ -408,18 +448,5 @@ void haltWithError(int errorCode) {
 /* TODO:
  *  - use beeps as fallback for if file cannot be played / card is absent
  *  - make prettier startup sound
- *  - Store settings to SD so persists through power change
- *    - http://pastebin.com/2jyCDHcf
- *      - https://www.arduino.cc/en/Tutorial/DumpFile
- *      - https://www.arduino.cc/en/Tutorial/ReadWrite
- *      - https://www.arduino.cc/en/Tutorial/Files
- *    - https://github.com/bneedhamia/sdconfigfile
- *    - https://github.com/nigelb/arduino-FSConf
- *    - https://github.com/stevemarple/IniFile
  *  - Volume, for some reason, does not work; maybe not through headphone jack?
  */
-
-unsigned long sec(unsigned long x)
-{
-  return x*1000000;
-}

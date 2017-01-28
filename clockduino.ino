@@ -27,8 +27,8 @@ int VS1053_reset = -1,
 #define ERR_NO_BACKGROUND 12
 
 // Different states the clock can be in
-typedef enum {NORMAL, ALARMED, MENU,
-              SET_ARMED, SET_TIME, SET_ALARM, SET_SNOOZE, SET_VOLUME, SET_BRIGHTNESS} state;
+typedef enum {SET_ARMED, SET_TIME, SET_ALARM, SET_SNOOZE, SET_VOLUME, SET_BRIGHTNESS,
+              NORMAL, ALARMED, MENU} state;
 state currentState = NORMAL, currentMenuItem = SET_ARMED;
 
 // For dots:  // 0x2 is middle, 0x4 is left-top, 0x8 is left-bottom, 0x16 is right
@@ -189,62 +189,24 @@ void updateDots(boolean isPM) {
 }
 
 void navigateMenu() {
-  if (digitalRead(hourBtnPin) == LOW){
-    switch(currentMenuItem) {
-      case SET_ARMED:
-        currentMenuItem = SET_TIME;
-        player.startPlayingFile("mmenu002.mp3");
-        break;
-      case SET_TIME: 
-        currentMenuItem = SET_ALARM;
-        player.startPlayingFile("mmenu003.mp3");
-        break;
-      case SET_ALARM:
-        currentMenuItem = SET_SNOOZE;
-        player.startPlayingFile("mmenu004.mp3");
-        break;
-      case SET_SNOOZE:
-        currentMenuItem = SET_VOLUME;
-        player.startPlayingFile("mmenu005.mp3");
-        break;
-      case SET_VOLUME:
-        currentMenuItem = SET_BRIGHTNESS;
-        player.startPlayingFile("mmenu006.mp3");
-        break;
-      case SET_BRIGHTNESS:
-        currentMenuItem = SET_ARMED;
-        player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
-        break;
-    }
+  String filename = "mmenu00";
+  if (digitalRead(hourBtnPin) == LOW) {
+    currentMenuItem = (currentMenuItem + 1) % (NORMAL);
+  } else if (digitalRead(minuteBtnPin) == LOW) {
+    currentMenuItem = (currentMenuItem - 1) % (NORMAL);
+    if(currentMenuItem < 0)
+      currentMenuItem = NORMAL - 1;
   }
-  else if (digitalRead(minuteBtnPin) == LOW) {
-    switch(currentMenuItem) {
-      case SET_ARMED:
-        currentMenuItem = SET_BRIGHTNESS;
-        player.startPlayingFile("mmenu006.mp3");
-        break;
-      case SET_TIME: 
-        currentMenuItem = SET_ARMED;
-        player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
-        break;
-      case SET_ALARM:
-        currentMenuItem = SET_TIME;
-        player.startPlayingFile("mmenu002.mp3");
-        break;
-      case SET_SNOOZE:
-        currentMenuItem = SET_ALARM;
-        player.startPlayingFile("mmenu003.mp3");
-        break;
-      case SET_VOLUME:
-        currentMenuItem = SET_SNOOZE;
-        player.startPlayingFile("mmenu004.mp3");
-        break;
-      case SET_BRIGHTNESS:
-        currentMenuItem = SET_VOLUME;
-        player.startPlayingFile("mmenu005.mp3");
-        break;
-    }
-  }
+  
+  if(currentMenuItem==SET_ARMED)
+    filename = filename + (alarm._armed ? 1 : 0);
+  else
+    filename = filename + (currentMenuItem + 1);
+
+  filename = filename + ".mp3";
+  char filenameC[13];
+  filename.toCharArray(filenameC, 13);
+  play(filenameC);
 }
 
 // Set the time
@@ -315,10 +277,9 @@ void buttonCheck() {
         player.stopPlaying();
         break;
       case NORMAL:
-        Serial.print("Entering Menu");
         currentState = MENU;
         currentMenuItem = SET_ARMED;
-        player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
+        play(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
         break;
       default:
         currentState = NORMAL;
@@ -361,7 +322,7 @@ void buttonCheck() {
       case MENU:
         if(currentMenuItem == SET_ARMED) {
           alarm._armed = !alarm._armed;
-          player.startPlayingFile(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
+          play(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
         } else {
           currentState = currentMenuItem;
           beep();
@@ -383,10 +344,9 @@ void buttonCheck() {
 void alarmCheck() {
   DateTime now = rtc.now();
   int t = now.hour()*100 + now.minute();
-  if(alarm.check(t) || (currentState == ALARMED && !player.playingMusic)) {
-    Serial.println("ALARMED");
+  if((currentState != ALARMED && alarm.check(t)) || (currentState == ALARMED && !player.playingMusic)) {
     currentState = ALARMED;
-    player.startPlayingFile("alarming.mp3");
+    play("alarming.mp3");
   }
 }
 
@@ -406,6 +366,14 @@ void printTime(int t) {
 void snooze() {
   alarm.hitSnooze();
   player.stopPlaying();
+  currentState = NORMAL; 
+}
+
+void play(char* filename) {
+  Serial.print("Playing ");
+  Serial.println(filename);
+  player.stopPlaying();
+  player.startPlayingFile(filename);
 }
 
 void haltWithError(int errorCode) {
@@ -430,7 +398,6 @@ void haltWithError(int errorCode) {
  *    - https://github.com/nigelb/arduino-FSConf
  *    - https://github.com/stevemarple/IniFile
  *  - Volume, for some reason, does not work; maybe not through headphone jack?
- *  - add menu option to choose track?
  */
 
 unsigned long sec(unsigned long x)

@@ -220,7 +220,9 @@ void returnToMenu() {
     beep(); beep(); return;
   }
   cfgFile.print(F("armed="));
-  cfgFile.println(alarm._armed);
+  cfgFile.println(alarm._armed ? F("true") : F("false"));
+  cfgFile.print(F("alarm="));
+  cfgFile.println(alarm._time);
   cfgFile.print(F("snooze="));
   cfgFile.println(alarm._snooze);
   cfgFile.print(F("volume="));
@@ -233,7 +235,6 @@ void returnToMenu() {
 void selectMenuItem() {
   if(currentMenuItem == SET_ARMED) {
     alarm._armed = !alarm._armed;
-//    play(alarm._armed ? "mmenu001.mp3" : "mmenu000.mp3");
     returnToMenu();
     navigateMenu();
   } else {
@@ -409,6 +410,8 @@ void readConfig() {
   while (cfg.readNextSetting()) {
     if (cfg.nameIs("armed"))
       alarm._armed = cfg.getBooleanValue();
+    else if(cfg.nameIs("alarm"))
+      alarm._time = cfg.getIntValue();
     else if(cfg.nameIs("snooze"))
       alarm._snooze = cfg.getIntValue();
     else if(cfg.nameIs("volume"))

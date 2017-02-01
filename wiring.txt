@@ -8,11 +8,14 @@ subgraph UNO R3
   SCL
   SDA
 
-  3 --- reserved for VS1053_DREQ
-  4 --- reserved for VS1053_CARDSELECT
+  analog4
+  analog5
+
+  3 %% reserved for VS1053_DREQ
+  4 %% reserved for VS1053_CARDSELECT
   5
-  6 --- reserved for VS1053_DATASELECT
-  7 --- reserved for VS1053_CHIPSELECT
+  6 %% reserved for VS1053_DATASELECT
+  7 %% reserved for VS1053_CHIPSELECT
   8
   9
   10
@@ -20,8 +23,8 @@ end
 subgraph ChronoDot
   rtc::GND --- GND
   rtc::VCC --- 3V
-  rtc::SCL --- 5
-  rtc::SDA --- 4
+  rtc::SCL --- analog5
+  rtc::SDA --- analog4
 end
 subgraph LED Backpack
   led::IO --- led::+

@@ -1,8 +1,10 @@
 // https://github.com/adafruit/RTClib
-#include <Wire.h>
+//    (Maybe instead https://github.com/mizraith/RTClib.git)
+// ChronoDot v2.1 - DS3231 - https://www.adafruit.com/products/255
 #include <RTClib.h>
 
 // https://github.com/adafruit/Adafruit_LED_Backpack
+// Adafruit 1.2" 7-segment clock display - https://www.adafruit.com/products/1266
 #include <Adafruit_GFX.h>
 #include <gfxfont.h>
 #include <Adafruit_LEDBackpack.h>
@@ -12,6 +14,7 @@
 #define LED_DOTS_RIGHT   16
 
 // https://github.com/adafruit/Adafruit_VS1053_Library
+// Adafruit Music Maker Shield w/ amp - VS1053 - https://www.adafruit.com/products/1788
 #include <SPI.h>
 #include <Adafruit_VS1053.h>
 #include <SD.h>
@@ -26,6 +29,7 @@
 #define CONFIG_FILE "config.cfg"
 
 
+#define ERR_NO_CLOCK 2
 #define ERR_NO_AUDIO 4
 #define ERR_NO_STORAGE 7
 #define ERR_NO_BACKGROUND 12
@@ -71,7 +75,7 @@ class Alarm {
     }
 };
 Alarm alarm;
-RTC_Millis rtc;
+RTC_DS3231 rtc;
 Adafruit_7segment matrix = Adafruit_7segment();
 Adafruit_VS1053_FilePlayer player = Adafruit_VS1053_FilePlayer(VS1053_RESET, VS1053_CHIPSELECT, VS1053_DATASELECT, VS1053_DREQ, VS1053_CARDSELECT);
 
@@ -85,13 +89,16 @@ unsigned int brightness = 15;
 void setup() 
 {
   Serial.begin(9600);
-  rtc.begin(DateTime(F(__DATE__), F(__TIME__)));
   matrix.begin(0x70);
   pinMode(PIN_BTN_SNOOZE, INPUT_PULLUP);
   pinMode(PIN_BTN_HOUR,   INPUT_PULLUP);
   pinMode(PIN_BTN_MINUTE, INPUT_PULLUP);
   pinMode(PIN_LED_SNOOZE, OUTPUT);
 
+  if (! rtc.begin()) {
+    Serial.println(F("Couldn't find RTC"));
+     haltWithError(ERR_NO_CLOCK);
+  }
   if (! player.begin()) {
      Serial.println(F("Couldn't find VS1053, do you have the right pins defined?"));
      haltWithError(ERR_NO_AUDIO);

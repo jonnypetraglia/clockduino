@@ -330,7 +330,10 @@ void buttonCheck() {
         dismissAlarm();
         break;
       case NORMAL:
-        enterMenu();
+        if(alarm._snoozeCount > 0)
+          dismissAlarm();
+        else
+          enterMenu();
         break;
       default:
         exitMenu();

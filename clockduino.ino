@@ -113,6 +113,8 @@ void setup()
   }
 
   readConfig();
+
+  digitalWrite(PIN_LED_SNOOZE, HIGH);
   
   player.setVolume(100-alarm._volume, 100-alarm._volume);
   beep();
@@ -120,6 +122,7 @@ void setup()
   matrix.setBrightness(brightness);
   matrix.print(8888);
   matrix.writeDisplay();
+  Serial.println("Started");
   delay(500);
 }
 
@@ -197,7 +200,11 @@ void updateDisplay() {
 
 // Update AM/PM, armed, & center dots
 void updateDots(boolean isPM) {
-  matrix.writeDigitRaw(2, (isPM ? LED_DOTS_LEFTBOT : 0) | (alarm._armed? LED_DOTS_LEFTTOP : 0) | (dots ? LED_DOTS_MIDDLE : 0));
+  matrix.writeDigitRaw(2,
+    (waitingOnButtonLift ?  LED_DOTS_RIGHT : 0) |
+    (isPM ?                 LED_DOTS_LEFTBOT : 0) |
+    (alarm._armed?          LED_DOTS_LEFTTOP : 0) |
+    (dots ?                 LED_DOTS_MIDDLE : 0));
 }
 
 void enterMenu() {
@@ -322,9 +329,11 @@ void buttonCheck() {
 
   if(waitingOnButtonLift && (hourPressed || minutePressed || snoozePressed))
     return;
+  waitingOnButtonLift = hourPressed || minutePressed || snoozePressed;
 
   // Enter/exit menu & turn off alarm
   if (hourPressed && minutePressed) {
+    Serial.println("H&M pressed");
     switch(currentState) {
       case ALARMED:
         dismissAlarm();
@@ -341,6 +350,10 @@ void buttonCheck() {
     }
   // Singular button press; handle different depending on state
   } else if (hourPressed || minutePressed) {
+    if(hourPressed)
+      Serial.println("Hour pressed");
+    else
+      Serial.println("Min pressed");
     switch(currentState) {
       case MENU:
         navigateMenu();
@@ -367,14 +380,15 @@ void buttonCheck() {
     dots = true;
   // Snooze & confirm menu selection
   } else if (snoozePressed) {
-    if(currentState==ALARMED)
+    Serial.println("Snooze pressed");
+    if(currentState==NORMAL) {
+    } else if(currentState==ALARMED)
       snooze();
     else if(currentState==MENU)
       selectMenuItem();
     else
       returnToMenu();
   }
-  waitingOnButtonLift = hourPressed || minutePressed || snoozePressed;
   if(waitingOnButtonLift)
     updateDisplay();
 }
@@ -448,6 +462,7 @@ void play(const char* filename) {
 void beep() {
   player.sineTest(0x44, 250);
   player.stopPlaying();
+  
 }
 
 void haltWithError(int errorCode) {
